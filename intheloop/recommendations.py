@@ -1,7 +1,6 @@
 """
-This module creates a custom exception handler that will send the error to OpenAI's
-ChatGPT in order to help debug the code. It will also display the error in the
-notebook as usual.
+This module creates a custom exception handler that will send the error to a model in order to help debug the code.
+It will also display the error in the notebook as usual.
 """
 
 from traceback import TracebackException
