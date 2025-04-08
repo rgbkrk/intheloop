@@ -14,7 +14,9 @@ from IPython.core.getipython import get_ipython
 from spork import Markdown
 
 from openai import OpenAI
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionSystemMessageParam
+
+from .context import NotebookContext
 
 
 class InTheLoop:
@@ -22,21 +24,61 @@ class InTheLoop:
         self.client = OpenAI()
         self.messages = []
 
-    def form_exception_messages(self, code:str | None, etype:Type[BaseException], evalue:BaseException, plaintext_traceback:str) -> Iterable[ChatCompletionMessageParam]:
+    def gather_context(self, shell: InteractiveShell) -> Dict[str, Any]:
+        """Gather current notebook context"""
+        context = NotebookContext(shell)
+        return context.format_context()
 
-        # Plan:
-        # Show that the user ran {code} and got the exception {etype} with value {evalue}.
-        # The traceback should be trimmed down to 1024 characters.
-        # It can show up as system messages entirely
-        # We then return the messages to be used in the OpenAI API call
-
+    def form_exception_messages(self, code: str | None, etype: Type[BaseException], 
+                              evalue: BaseException, plaintext_traceback: str,
+                              context: Dict[str, Any]) -> Iterable[ChatCompletionMessageParam]:
+        """Enhanced message formation with context"""
         code_str = str(code) if code is not None else "<no code available>"
-        return [{
-            "role": "system",
-            "content": f"In[#]: {code_str}\n\nOut[#]: {evalue}\n\nTraceback:\n{plaintext_traceback}"
-        }]
         
-    # this function will be called on exceptions in any cell
+        # Format the context information
+        context_str = self._format_context_for_message(context)
+
+        return [ChatCompletionSystemMessageParam(
+            role="system",
+            content=(
+                f"Current Notebook Context:\n{context_str}\n\n"
+                f"Error occurred in:\nIn[#]: {code_str}\n\n"
+                f"Error:\n{evalue}\n\n"
+                f"Traceback:\n{plaintext_traceback}"
+            )
+        )]
+
+
+    def _format_context_for_message(self, context: Dict[str, Any]) -> str:
+        """Format context information for inclusion in messages"""
+        sections = []
+        
+        if context['dataframes']:
+            df_info = "\n".join(
+                f"- {df.name}: {df.shape}, columns={list(df.dtypes.keys())}"
+                for df in context['dataframes']
+            )
+            sections.append(f"DataFrames:\n{df_info}")
+            
+        if context['arrays']:
+            array_info = "\n".join(
+                f"- {arr.name}: {arr.summary}"
+                for arr in context['arrays']
+            )
+            sections.append(f"NumPy Arrays:\n{array_info}")
+            
+        if context['recent_history']:
+            history = "\n".join(
+                f"{i+1}. {cmd}" for i, cmd in enumerate(context['recent_history'])
+            )
+            sections.append(f"Recent Commands:\n{history}")
+            
+        if context['imported_modules']:
+            modules = ", ".join(context['imported_modules'])
+            sections.append(f"Imported Modules: {modules}")
+            
+        return "\n\n".join(sections)
+
     def custom_exc(
         self,
         shell: "InteractiveShell",
@@ -56,49 +98,43 @@ class InTheLoop:
             return
 
         try:
-            code = None
-
-            execution_count = shell.execution_count
-
-            In = shell.user_ns["In"]
-            history_manager = shell.history_manager
-
-            # If the history is available, use that as it has the raw inputs (including magics)
-            if (history_manager is not None) and (
-                execution_count == len(history_manager.input_hist_raw) - 1
-            ):
-                code = history_manager.input_hist_raw[execution_count]
-            # Fallback on In
-            elif In is not None and execution_count == len(In) - 1:
-                # Otherwise, use the current input buffer
-                code = In[execution_count]
-            # Otherwise history may not have been stored (store_history=False), so we should not send the
-            # code to GPT.
-            else:
-                code = None
-
-            gm = Markdown(
-                content="Seeking suggestion...",
-                #content="Let's see how we can fix this... 🔧",
-                # Note: stages were done with metadata in the past. We'll want to do that again at a later _stage_ (pun intended)
-                # stage=Stage.STARTING,
-            )
+            code = self._get_current_code(shell)
+            context = self.gather_context(shell)
+            
+            gm = Markdown(content="Analyzing context and seeking solution...")
             gm.display()
-
-            # Highly colorized tracebacks do not help GPT as much as a clean plaintext traceback.
+            
             formatted = TracebackException(etype, evalue, tb, limit=3).format(chain=True)
             plaintext_traceback = "\n".join(formatted)
 
+            messages = self.form_exception_messages(
+                code, etype, evalue, plaintext_traceback, context
+            )
+            gm.content = ""
 
+            # Display the messages in a collapsible details element
+            details_html = """
+            <details>
+                <summary>Sent context for the model</summary>
+                <pre style="white-space: pre-wrap; padding: 16px; border-radius: 6px; font-family: monospace;">
+{content}
+                </pre>
+            </details>
+            """.format(content="\n".join(str(m['content']) for m in messages if 'content' in m))
+            
+            from IPython.display import display, HTML
+            display(HTML(details_html))
+            
             resp = self.client.chat.completions.create(
-                model='gpt-4o-mini',
-                messages=self.form_exception_messages(code, etype, evalue, plaintext_traceback),
+                model='gpt-4-turbo-preview',  # Using latest model for better context understanding
+                messages=messages,
                 tools=[],
                 tool_choice='auto',
                 stream=True,
             )
 
-            gm.content = ""
+            gm = Markdown(content="Investigating...")
+            gm.display()
 
             for chunk in resp:
                 if chunk.choices[0].delta.content is not None:
@@ -110,6 +146,25 @@ class InTheLoop:
             
             if "gm" in locals():
                 gm.append("\n\n> **Interrupted** ⚠️")
+
+    def _get_current_code(self, shell: InteractiveShell) -> str | None:
+        execution_count = shell.execution_count
+        In = shell.user_ns["In"]
+        history_manager = shell.history_manager
+
+        # If the history is available, use that as it has the raw inputs (including magics)
+        if (history_manager is not None) and (
+            execution_count == len(history_manager.input_hist_raw) - 1
+        ):
+            return history_manager.input_hist_raw[execution_count]
+        # Fallback on In
+        elif In is not None and execution_count == len(In) - 1:
+            # Otherwise, use the current input buffer
+            return In[execution_count]
+        # Otherwise history may not have been stored (store_history=False), so we should not send the
+        # code to GPT.
+        else:
+            return None
 
 
 def register(ipython=None):
