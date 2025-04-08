@@ -107,10 +107,9 @@ class InTheLoop:
         except Exception as e:
             print("Error while trying to provide a suggestion: ", e)
         except KeyboardInterrupt:
-            # If we have our heading, replace it with empty text and take out any stage information
+            
             if "gm" in locals():
-                gm.content = " "
-                # gm.stage = None
+                gm.append("\n\n> **Interrupted** ⚠️")
 
 
 def register(ipython=None):
