@@ -2,13 +2,17 @@
 This module implements IPython magic commands for AI assistance with context awareness.
 """
 
-from typing import Dict, Any, Optional, cast
+from typing import Dict, Any, Optional, cast, List, Union
 from IPython.core.magic import (Magics, magics_class, line_magic, cell_magic)
 from IPython.core.magic_arguments import (argument, magic_arguments, parse_argstring)
 from IPython.core.interactiveshell import InteractiveShell
-from IPython.display import display, Markdown, DisplayHandle, HTML
+from IPython.display import display, Markdown, DisplayHandle, HTML, Image
 from openai import OpenAI
-from .context import NotebookContext
+
+from .context import NotebookContext, OutputInfo
+from .messages import create_system_message, create_user_message, Message, TextContent, ImageContent
+
+MessageContent = Union[TextContent, ImageContent]
 
 @magics_class
 class AIContextMagics(Magics):
@@ -20,8 +24,19 @@ class AIContextMagics(Magics):
         self.client = OpenAI()
         self.shell = cast(InteractiveShell, shell)
 
+    def _format_outputs_for_display(self, outputs: List[OutputInfo]) -> str:
+        """Format outputs for display in the details view"""
+        parts = []
+        for output in outputs:
+            for content in output.content:
+                if isinstance(content, TextContent):
+                    parts.append(f"Text output: {content.text}")
+                elif isinstance(content, ImageContent):
+                    parts.append("[Image output included]")
+        return "\n".join(parts)
+
     @magic_arguments()
-    @argument('-m', '--model', default='gpt-4-turbo-preview',
+    @argument('-m', '--model', default='gpt-4o',
               help='The model to use for completion')
     @argument('-s', '--system',
               help='Optional system message to override default')
@@ -35,7 +50,7 @@ class AIContextMagics(Magics):
             Your question or code here
             
         Options:
-            -m, --model: Specify the model to use (default: gpt-4-turbo-preview)
+            -m, --model: Specify the model to use (default: gpt-4o)
             -s, --system: Provide a custom system message
         """
         args = parse_argstring(self.ai, line)
@@ -44,28 +59,63 @@ class AIContextMagics(Magics):
         context = NotebookContext(self.shell)
         context_str = context.format_context_for_prompt()
         
+        # Get output history
+        outputs = context.get_output_history()
+        
         # Default system message
         system_msg = args.system or (
-            "You are a helpful AI assistant with access to the current notebook context. "
+            "You are a helpful AI data assistant with access to the current Jupyter/IPython notebook context. "
             "Use this context to provide more relevant and accurate responses."
         )
         
+        # Create base message content
+        message_content: List[MessageContent] = [TextContent(text=f"Current Notebook Context:\n{context_str}\n\nUser Query:\n{cell}")]
+        
+        # Add any output content
+        for output in outputs:
+            message_content.extend(output.content)
+        
+        # Create messages
         messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": f"Current Notebook Context:\n{context_str}\n\nUser Query:\n{cell}"}
+            create_system_message(system_msg),
+            Message(role="user", content=message_content)
         ]
 
         # Display the context in a collapsible details element
         details_html = """
         <details>
             <summary>Sent context for the model</summary>
-            <pre style="white-space: pre-wrap; padding: 16px; border-radius: 6px; font-family: monospace;">
-{content}
-            </pre>
+            <div style="padding: 16px; border-radius: 6px;">
+                <pre style="white-space: pre-wrap; font-family: monospace;">
+{text_content}
+                </pre>
+                <div style="margin-top: 10px;">
+                    <strong>Outputs included:</strong>
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+{image_previews}
+                    </div>
+                </div>
+            </div>
         </details>
-        """.format(content="\n".join(str(m['content']) for m in messages if 'content' in m))
+        """
         
-        display(HTML(details_html))
+        # Collect text and images
+        text_parts = []
+        image_previews = []
+        
+        for content in message_content:
+            if isinstance(content, TextContent):
+                text_parts.append(content.text)
+            elif isinstance(content, ImageContent):
+                image_previews.append(
+                    f'<img src="{content.image_url}" '
+                    'style="max-width: 200px; max-height: 200px; object-fit: contain;">'
+                )
+        
+        display(HTML(details_html.format(
+            text_content="\n".join(text_parts),
+            image_previews="\n".join(image_previews)
+        )))
         
         # Create a placeholder for streaming output
         display_handle = display(Markdown("_Thinking..._"), display_id=True)
@@ -73,8 +123,9 @@ class AIContextMagics(Magics):
         try:
             response = self.client.chat.completions.create(
                 model=args.model,
-                messages=messages,
-                stream=True
+                messages=[m.to_api_format() for m in messages],
+                stream=True,
+                max_tokens=4096
             )
             
             # Stream the response

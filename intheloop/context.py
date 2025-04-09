@@ -3,12 +3,18 @@ This module handles gathering and formatting context from the IPython environmen
 for use by a model.
 """
 
-from typing import TypedDict, Dict, Any, List, Optional
+from typing import TypedDict, Dict, Any, List, Optional, cast, Tuple
 from types import ModuleType
 import sys
 import inspect
 from dataclasses import dataclass
 from IPython.core.interactiveshell import InteractiveShell
+from IPython.core.formatters import DisplayFormatter
+import base64
+from PIL import Image
+from io import BytesIO
+
+from .messages import TextContent, ImageContent
 
 @dataclass
 class DataFrameInfo:
@@ -28,6 +34,12 @@ class VariableInfo:
     summary: str
     size: Optional[int] = None
 
+@dataclass
+class OutputInfo:
+    """Information about cell output"""
+    output_type: str
+    content: List[TextContent | ImageContent]
+
 class NotebookContext:
     """Gathers and manages context from the IPython environment"""
     
@@ -35,6 +47,105 @@ class NotebookContext:
         self.shell = shell
         self._pandas_available = 'pandas' in sys.modules
         self._numpy_available = 'numpy' in sys.modules
+
+    def _process_output_data(self, output_data: Dict[str, Any]) -> List[TextContent | ImageContent]:
+        """Process output data into appropriate content types"""
+        contents = []
+        
+        # Handle text/plain
+        if 'text/plain' in output_data:
+            contents.append(TextContent(text=str(output_data['text/plain'])))
+            
+        # Handle image/png
+        if 'image/png' in output_data:
+            img_data = output_data['image/png']
+            if isinstance(img_data, str):
+                # If it's already base64 encoded
+                image_url = f"data:image/png;base64,{img_data}"
+            else:
+                # If it's bytes, encode it
+                image_url = f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
+            contents.append(ImageContent(image_url=image_url))
+            
+        return contents
+
+    def _get_rich_output(self, obj: Any) -> Dict[str, Any]:
+        """Get rich output formats for an object using IPython's display formatter"""
+        if not hasattr(self.shell, 'display_formatter'):
+            return {}
+            
+        formatter = cast(DisplayFormatter, self.shell.display_formatter)
+        result = formatter.format(obj)
+        if result:
+            data, metadata = result
+            return data
+        return {}
+
+    def _process_notebook_output(self, output: Dict[str, Any]) -> List[TextContent | ImageContent]:
+        """Process output from a notebook cell"""
+        contents = []
+        
+        # Handle different output types
+        output_type = output.get('output_type')
+        
+        if output_type == 'execute_result' or output_type == 'display_data':
+            if 'data' in output:
+                contents.extend(self._process_output_data(output['data']))
+        elif output_type == 'stream':
+            if 'text' in output:
+                contents.append(TextContent(text=output['text']))
+                
+        return contents
+
+    def get_output_history(self, n_entries: int = 5) -> List[OutputInfo]:
+        """Get the output history including display data"""
+        outputs = []
+        
+        # First try to get outputs from the current notebook if available
+        nb = self.shell.user_ns.get('nb')
+        if nb is not None and hasattr(nb, 'cells'):
+            for cell in nb.cells:
+                if 'outputs' in cell:
+                    for output in cell['outputs']:
+                        contents = self._process_notebook_output(output)
+                        if contents:
+                            outputs.append(OutputInfo(
+                                output_type=output.get('output_type', 'unknown'),
+                                content=contents
+                            ))
+        
+        # Then get outputs from the current session
+        Out = self.shell.user_ns.get('Out', {})
+        current_execution = self.shell.execution_count
+        
+        # Look at recent outputs
+        for i in range(current_execution - n_entries, current_execution + 1):
+            if i in Out:
+                output = Out[i]
+                contents = []
+                
+                # Try using IPython's display formatter first
+                data = self._get_rich_output(output)
+                if data:
+                    contents.extend(self._process_output_data(data))
+                # Special handling for matplotlib figures
+                elif hasattr(output, 'get_figure'):  # For matplotlib axes
+                    fig_data = self._get_rich_output(output.get_figure())
+                    contents.extend(self._process_output_data(fig_data))
+                elif hasattr(output, 'canvas'):  # For matplotlib figures
+                    fig_data = self._get_rich_output(output)
+                    contents.extend(self._process_output_data(fig_data))
+                # Fallback to string representation
+                elif hasattr(output, '__str__'):
+                    contents.append(TextContent(text=str(output)))
+                
+                if contents:
+                    outputs.append(OutputInfo(
+                        output_type='execute_result',
+                        content=contents
+                    ))
+                        
+        return outputs
         
     def get_imported_modules(self) -> Dict[str, ModuleType]:
         """Get information about currently imported modules"""
@@ -169,7 +280,8 @@ class NotebookContext:
             'arrays': self.get_array_info(),
             'in_out_history': self.get_in_out_history(),
             'namespace': self.get_current_namespace_summary(),
-            'imported_modules': list(self.get_imported_modules().keys())
+            'imported_modules': list(self.get_imported_modules().keys()),
+            'outputs': self.get_output_history()
         }
 
     def format_context_for_prompt(self) -> str:

@@ -9,20 +9,22 @@ from typing import Iterable, Type, TypedDict, List, Dict, Any
 
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.getipython import get_ipython
+from IPython.display import display, HTML
 
 from spork import Markdown
 
 from openai import OpenAI
-from openai.types.chat import ChatCompletionMessageParam, ChatCompletionSystemMessageParam
+from openai.types.chat import ChatCompletionMessageParam
 
 from .context import NotebookContext
+from .messages import create_system_message, Message, TextContent
 
 
 class InTheLoop:
     def __init__(self):
         self.client = OpenAI()
-        self.messages = []
-        self.shell: InteractiveShell | None = None  # Initialize shell attribute
+        self.messages: List[Message] = []
+        self.shell: InteractiveShell | None = None
 
     def gather_context(self, shell: InteractiveShell) -> Dict[str, Any]:
         """Gather current notebook context"""
@@ -31,7 +33,7 @@ class InTheLoop:
 
     def form_exception_messages(self, code: str | None, etype: Type[BaseException], 
                               evalue: BaseException, plaintext_traceback: str,
-                              context: Dict[str, Any]) -> Iterable[ChatCompletionMessageParam]:
+                              context: Dict[str, Any]) -> List[Message]:
         """Enhanced message formation with context"""
         code_str = str(code) if code is not None else "<no code available>"
         
@@ -42,14 +44,11 @@ class InTheLoop:
         notebook_context = NotebookContext(self.shell)
         context_str = notebook_context.format_context_for_prompt()
 
-        return [ChatCompletionSystemMessageParam(
-            role="system",
-            content=(
-                f"Current Notebook Context:\n{context_str}\n\n"
-                f"Error occurred in:\nIn[#]: {code_str}\n\n"
-                f"Error:\n{evalue}\n\n"
-                f"Traceback:\n{plaintext_traceback}"
-            )
+        return [create_system_message(
+            f"Current Notebook Context:\n{context_str}\n\n"
+            f"Error occurred in:\nIn[#]: {code_str}\n\n"
+            f"Error:\n{evalue}\n\n"
+            f"Traceback:\n{plaintext_traceback}"
         )]
 
     def custom_exc(
@@ -93,14 +92,18 @@ class InTheLoop:
 {content}
                 </pre>
             </details>
-            """.format(content="\n".join(str(m['content']) for m in messages if 'content' in m))
+            """.format(content="\n".join(
+                str(content.text) 
+                for m in messages 
+                for content in m.content 
+                if isinstance(content, TextContent)
+            ))
             
-            from IPython.display import display, HTML
             display(HTML(details_html))
             
             resp = self.client.chat.completions.create(
                 model='gpt-4-turbo-preview',  # Using latest model for better context understanding
-                messages=messages,
+                messages=[m.to_api_format() for m in messages],
                 tools=[],
                 tool_choice='auto',
                 stream=True,
