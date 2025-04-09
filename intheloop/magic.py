@@ -11,6 +11,7 @@ from openai import OpenAI
 
 from .context import NotebookContext, OutputInfo
 from .messages import create_system_message, create_user_message, Message, TextContent, ImageContent
+from openai.types.responses.response_input_param import ResponseInputItemParam
 
 MessageContent = Union[TextContent, ImageContent]
 
@@ -76,9 +77,9 @@ class AIContextMagics(Magics):
             message_content.extend(output.content)
         
         # Create messages
-        messages = [
+        messages: List[ResponseInputItemParam] = [
             create_system_message(system_msg),
-            Message(role="user", content=message_content)
+            create_user_message(message_content)
         ]
 
         # Display the context in a collapsible details element
@@ -121,9 +122,9 @@ class AIContextMagics(Magics):
         display_handle = display(Markdown("_Thinking..._"), display_id=True)
         
         try:
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model=args.model,
-                messages=[m.to_api_format() for m in messages],
+                input=messages,
                 stream=True,
                 max_tokens=4096
             )
