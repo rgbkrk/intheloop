@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, cast
 from IPython.core.magic import (Magics, magics_class, line_magic, cell_magic)
 from IPython.core.magic_arguments import (argument, magic_arguments, parse_argstring)
 from IPython.core.interactiveshell import InteractiveShell
-from IPython.display import display, Markdown, DisplayHandle
+from IPython.display import display, Markdown, DisplayHandle, HTML
 from openai import OpenAI
 from .context import NotebookContext
 
@@ -57,6 +57,18 @@ class AIContextMagics(Magics):
             {"role": "system", "content": system_msg},
             {"role": "user", "content": f"Current Notebook Context:\n{context_str}\n\nUser Query:\n{cell}"}
         ]
+
+        # Display the context in a collapsible details element
+        details_html = """
+        <details>
+            <summary>Sent context for the model</summary>
+            <pre style="white-space: pre-wrap; padding: 16px; border-radius: 6px; font-family: monospace;">
+{content}
+            </pre>
+        </details>
+        """.format(content="\n".join(str(m['content']) for m in messages if 'content' in m))
+        
+        display(HTML(details_html))
         
         # Create a placeholder for streaming output
         display_handle = display(Markdown("_Thinking..._"), display_id=True)

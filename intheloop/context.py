@@ -79,13 +79,24 @@ class NotebookContext:
         
         for name, obj in self.shell.user_ns.items():
             if isinstance(obj, np.ndarray):
-                info = VariableInfo(
-                    name=name,
-                    type_name=str(obj.dtype),
-                    summary=f"shape={obj.shape}, min={obj.min():.2f}, max={obj.max():.2f}",
-                    size=obj.nbytes
-                )
-                arrays.append(info)
+                try:
+                    # For numeric arrays, include min/max
+                    if np.issubdtype(obj.dtype, np.number):
+                        summary = f"shape={obj.shape}, min={obj.min():.2f}, max={obj.max():.2f}"
+                    else:
+                        # For non-numeric arrays (e.g. strings), just show shape and dtype
+                        summary = f"shape={obj.shape}, dtype={obj.dtype}"
+                        
+                    info = VariableInfo(
+                        name=name,
+                        type_name=str(obj.dtype),
+                        summary=summary,
+                        size=obj.nbytes
+                    )
+                    arrays.append(info)
+                except Exception as e:
+                    # Skip problematic arrays but log the error
+                    print(f"Error gathering info for array {name}: {e}")
                 
         return arrays
 
