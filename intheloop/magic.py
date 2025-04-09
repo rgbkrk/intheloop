@@ -21,7 +21,7 @@ class AIContextMagics(Magics):
         self.shell = cast(InteractiveShell, shell)
 
     @magic_arguments()
-    @argument('-m', '--model', default='gpt-4-turbo-preview',
+    @argument('-m', '--model', default='gpt-4o',
               help='The model to use for completion')
     @argument('-s', '--system',
               help='Optional system message to override default')
@@ -35,7 +35,7 @@ class AIContextMagics(Magics):
             Your question or code here
             
         Options:
-            -m, --model: Specify the model to use (default: gpt-4-turbo-preview)
+            -m, --model: Specify the model to use (default: gpt-4o)
             -s, --system: Provide a custom system message
         """
         args = parse_argstring(self.ai, line)
@@ -71,17 +71,17 @@ class AIContextMagics(Magics):
         display_handle = display(Markdown("_Thinking..._"), display_id=True)
         
         try:
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model=args.model,
-                messages=messages,
+                input=messages,
                 stream=True
             )
             
             # Stream the response
             full_response = ""
             for chunk in response:
-                if chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
+                if chunk.type == "response.output_text.delta":
+                    full_response += chunk.delta
                     if display_handle:
                         display_handle.update(Markdown(full_response))
                     
