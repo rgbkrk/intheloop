@@ -100,14 +100,36 @@ class NotebookContext:
                 
         return arrays
 
-    def get_recent_history(self, n_entries: int = 5) -> List[str]:
-        """Get the most recent command history"""
-        if self.shell.history_manager:
-            # Get the last n entries from history
-            return [
-                entry[2] for entry in self.shell.history_manager.get_tail(n_entries)
-            ]
-        return []
+    def get_in_out_history(self, n_entries: int = 5) -> List[Dict[str, Any]]:
+        """Get the most recent In/Out history, excluding %%ai commands"""
+        history = []
+        
+        # Try multiple sources for input/output history
+        In = self.shell.user_ns.get('In', self.shell.user_ns.get('_ih', []))
+        Out = self.shell.user_ns.get('Out', self.shell.user_ns.get('_oh', {}))
+        
+        if not In:  # If we still don't have input history
+            return history
+
+        # Start from the most recent and work backwards
+        for i in range(len(In) - 1, max(-1, len(In) - n_entries - 1), -1):
+            input_cmd = In[i]
+            # Skip empty inputs and %%ai commands
+            if not input_cmd or input_cmd.strip().startswith('%%ai'):
+                continue
+            
+            # Get output if it exists
+            output = Out.get(i, '')
+            
+            # Only include non-empty outputs or inputs that aren't magic commands
+            if output or not (input_cmd.startswith('%') or input_cmd.startswith('get_ipython()')):
+                entry = {
+                    'In': input_cmd,
+                    'Out': output
+                }
+                history.append(entry)
+            
+        return history
 
     def get_current_namespace_summary(self) -> List[VariableInfo]:
         """Get a summary of current variables in namespace"""
@@ -145,7 +167,7 @@ class NotebookContext:
         return {
             'dataframes': self.get_dataframe_info(),
             'arrays': self.get_array_info(),
-            'recent_history': self.get_recent_history(),
+            'in_out_history': self.get_in_out_history(),
             'namespace': self.get_current_namespace_summary(),
             'imported_modules': list(self.get_imported_modules().keys())
         }

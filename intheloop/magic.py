@@ -110,11 +110,14 @@ class AIContextMagics(Magics):
             )
             sections.append(f"NumPy Arrays:\n{array_info}")
             
-        if context['recent_history']:
-            history = "\n".join(
-                f"{i+1}. {cmd}" for i, cmd in enumerate(context['recent_history'][-5:])
-            )
-            sections.append(f"Recent Commands:\n{history}")
+        if context['in_out_history']:
+            history_entries = []
+            for i, entry in enumerate(reversed(context['in_out_history'])):
+                history_entries.append(f"In[{i}]: {entry['In']}")
+                if entry['Out']:  # Only show Out if there's actual output
+                    history_entries.append(f"Out[{i}]: {entry['Out']}")
+            history = "\n".join(history_entries)
+            sections.append(f"Recent In/Out History:\n{history}")
             
         if context['imported_modules']:
             modules = ", ".join(context['imported_modules'])
