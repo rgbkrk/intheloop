@@ -171,3 +171,37 @@ class NotebookContext:
             'namespace': self.get_current_namespace_summary(),
             'imported_modules': list(self.get_imported_modules().keys())
         }
+
+    def format_context_for_prompt(self) -> str:
+        """Format context information into a string suitable for model prompts"""
+        context = self.format_context()
+        sections = []
+        
+        if context['dataframes']:
+            df_info = "\n".join(
+                f"- {df.name}: {df.shape}, columns={df.columns}"
+                for df in context['dataframes']
+            )
+            sections.append(f"DataFrames:\n{df_info}")
+            
+        if context['arrays']:
+            array_info = "\n".join(
+                f"- {arr.name}: {arr.summary}"
+                for arr in context['arrays']
+            )
+            sections.append(f"NumPy Arrays:\n{array_info}")
+            
+        if context['in_out_history']:
+            history_entries = []
+            for i, entry in enumerate(reversed(context['in_out_history'])):
+                history_entries.append(f"In[{i}]: {entry['In']}")
+                if entry['Out']:  # Only show Out if there's actual output
+                    history_entries.append(f"Out[{i}]: {entry['Out']}")
+            history = "\n".join(history_entries)
+            sections.append(f"Recent In/Out History:\n{history}")
+            
+        if context['imported_modules']:
+            modules = ", ".join(context['imported_modules'])
+            sections.append(f"Imported Modules: {modules}")
+            
+        return "\n\n".join(sections)

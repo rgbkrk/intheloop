@@ -22,6 +22,7 @@ class InTheLoop:
     def __init__(self):
         self.client = OpenAI()
         self.messages = []
+        self.shell: InteractiveShell | None = None  # Initialize shell attribute
 
     def gather_context(self, shell: InteractiveShell) -> Dict[str, Any]:
         """Gather current notebook context"""
@@ -34,8 +35,12 @@ class InTheLoop:
         """Enhanced message formation with context"""
         code_str = str(code) if code is not None else "<no code available>"
         
-        # Format the context information
-        context_str = self._format_context_for_message(context)
+        # Get context from NotebookContext
+        if self.shell is None:
+            raise RuntimeError("Shell not initialized")
+            
+        notebook_context = NotebookContext(self.shell)
+        context_str = notebook_context.format_context_for_prompt()
 
         return [ChatCompletionSystemMessageParam(
             role="system",
@@ -46,40 +51,6 @@ class InTheLoop:
                 f"Traceback:\n{plaintext_traceback}"
             )
         )]
-
-
-    def _format_context_for_message(self, context: Dict[str, Any]) -> str:
-        """Format context information for inclusion in messages"""
-        sections = []
-        
-        if context['dataframes']:
-            df_info = "\n".join(
-                f"- {df.name}: {df.shape}, columns={list(df.dtypes.keys())}"
-                for df in context['dataframes']
-            )
-            sections.append(f"DataFrames:\n{df_info}")
-            
-        if context['arrays']:
-            array_info = "\n".join(
-                f"- {arr.name}: {arr.summary}"
-                for arr in context['arrays']
-            )
-            sections.append(f"NumPy Arrays:\n{array_info}")
-            
-        if context['in_out_history']:
-            history_entries = []
-            for i, entry in enumerate(reversed(context['in_out_history'])):
-                history_entries.append(f"In[{i}]: {entry['In']}")
-                if entry['Out']:  # Only show Out if there's actual output
-                    history_entries.append(f"Out[{i}]: {entry['Out']}")
-            history = "\n".join(history_entries)
-            sections.append(f"Recent In/Out History:\n{history}")
-            
-        if context['imported_modules']:
-            modules = ", ".join(context['imported_modules'])
-            sections.append(f"Imported Modules: {modules}")
-            
-        return "\n\n".join(sections)
 
     def custom_exc(
         self,
@@ -176,5 +147,5 @@ def register(ipython=None):
         return
 
     itl = InTheLoop()
-        
+    itl.shell = ipython  # Store shell reference for context gathering
     ipython.set_custom_exc((Exception,), itl.custom_exc)

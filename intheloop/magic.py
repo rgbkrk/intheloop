@@ -42,10 +42,7 @@ class AIContextMagics(Magics):
         
         # Gather context
         context = NotebookContext(self.shell)
-        context_info = context.format_context()
-        
-        # Format context information
-        context_str = self._format_context(context_info)
+        context_str = context.format_context_for_prompt()
         
         # Default system message
         system_msg = args.system or (
@@ -91,39 +88,6 @@ class AIContextMagics(Magics):
         except Exception as e:
             if display_handle:
                 display_handle.update(Markdown(f"Error: {str(e)}"))
-            
-    def _format_context(self, context: Dict[str, Any]) -> str:
-        """Format context information for the prompt"""
-        sections = []
-        
-        if context['dataframes']:
-            df_info = "\n".join(
-                f"- {df.name}: {df.shape}, columns={df.columns}"
-                for df in context['dataframes']
-            )
-            sections.append(f"DataFrames:\n{df_info}")
-            
-        if context['arrays']:
-            array_info = "\n".join(
-                f"- {arr.name}: {arr.summary}"
-                for arr in context['arrays']
-            )
-            sections.append(f"NumPy Arrays:\n{array_info}")
-            
-        if context['in_out_history']:
-            history_entries = []
-            for i, entry in enumerate(reversed(context['in_out_history'])):
-                history_entries.append(f"In[{i}]: {entry['In']}")
-                if entry['Out']:  # Only show Out if there's actual output
-                    history_entries.append(f"Out[{i}]: {entry['Out']}")
-            history = "\n".join(history_entries)
-            sections.append(f"Recent In/Out History:\n{history}")
-            
-        if context['imported_modules']:
-            modules = ", ".join(context['imported_modules'])
-            sections.append(f"Imported Modules: {modules}")
-            
-        return "\n\n".join(sections)
 
 def load_ipython_extension(ipython: Optional[InteractiveShell]) -> None:
     """
