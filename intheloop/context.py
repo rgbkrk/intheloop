@@ -3,10 +3,9 @@ This module handles gathering and formatting context from the IPython environmen
 for use by a model.
 """
 
-from typing import TypedDict, Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional
 from types import ModuleType
 import sys
-import inspect
 from dataclasses import dataclass
 from IPython.core.interactiveshell import InteractiveShell
 
